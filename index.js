@@ -1,6 +1,9 @@
 import express from 'express'
+import fs from 'node:fs'
 import basicAuth from 'express-basic-auth'
+import cookieParser from 'cookie-parser'
 import http from 'node:http'
+import process from 'node:process'
 import { createBareServer } from '@tomphttp/bare-server-node'
 import path from 'node:path'
 import cors from 'cors'
@@ -10,6 +13,13 @@ const server = http.createServer()
 const app = express(server)
 const bareServer = createBareServer('/o/')
 const PORT = process.env.PORT || 8080
+
+const LICENSE_SERVER_URL = process.env.LICENSE_SERVER_URL
+const whiteListedDomains = ['gointerstellar.app']
+// todo: make fake site
+const failureFile = fs.readFileSync('failed.html', 'utf8')
+// const placeholder = fs.readFileSync('placeholder.svg', 'utf8')
+
 if (config.challenge) {
   console.log('Password protection is enabled. Usernames are: ' + Object.keys(config.users))
   console.log('Passwords are: ' + Object.values(config.users))
@@ -24,7 +34,69 @@ if (config.challenge) {
 app.use(express.json())
 app.use(express.urlencoded({ extended: true }))
 app.use(cors())
+app.use(cookieParser())
 app.use(express.static(path.join(__dirname, 'static')))
+async function MasqFail(req, res) {
+  if (!req.headers.host) {
+    return
+  }
+const unsafeSuffix = req.headers.host + '.html'
+  let safeSuffix = path.normalize(unsafeSuffix).replace(/^(\.\.(\/|\\|$))+/, '')
+  let safeJoin = path.join(process.cwd() + '/Masqrd', safeSuffix)
+  try {
+    await fs.promises.access(safeJoin)
+    const failureFileLocal = await fs.promises.readFile(safeJoin, 'utf8')
+    res.setHeader('Content-Type', 'text/html')
+    res.send(failureFileLocal)
+    return
+  } catch (e) {
+    res.setHeader('Content-Type', 'text/html')
+    res.send(failureFile)
+    return
+  }
+}
+if (process.env.MASQR === 'true') {
+  app.use(async (req, res, next) => {
+    if (req.headers.host && whiteListedDomains.includes(req.headers.host)) {
+      next()
+      return
+    }
+    if (req.url.includes('/o/')) {
+      next()
+      return
+    }
+
+    const authheader = req.headers.authorization
+    if (req.cookies['authcheck']) {
+      next()
+      return
+    }
+
+    if (req.cookies['refreshcheck'] != 'true') {
+      res.cookie('refreshcheck', 'true', { maxAge: 10000 }) // 10s refresh check
+      MasqFail(req, res)
+      return
+    }
+    if (!authheader) {
+      res.setHeader('WWW-Authenticate', 'Basic')
+      res.status(401)
+      MasqFail(req, res)
+      return
+    }
+    const auth = Buffer.from(authheader.split(' ')[1], 'base64').toString().split(':')
+    const pass = auth[1]
+    const licenseCheck = (await (await fetch(LICENSE_SERVER_URL + pass + '&host=' + req.headers.host)).json())['status']
+    console.log(LICENSE_SERVER_URL + pass + '&host=' + req.headers.host + ' returned ' + licenseCheck)
+    if (licenseCheck == 'License valid') {
+      res.cookie('authcheck', 'true', { expires: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) })
+      res.send(`<script> window.location.href = window.location.href </script>`)
+      return
+    }
+
+    MasqFail(req, res)
+    return
+  })
+}
 
 if (config.routes !== false) {
   const routes = [
@@ -34,7 +106,7 @@ if (config.routes !== false) {
     { path: '/t', file: 'tabs.html' },
     { path: '/p', file: 'go.html' },
     { path: '/', file: 'index.html' },
-    { path: '/privacy-tos', file: 'tosandprivacy.html' },
+    { path: '/tos', file: 'tosandprivacy.html' },
   ]
 
   routes.forEach((route) => {
@@ -79,7 +151,6 @@ const fetchData = async (req, res, next, baseUrls) => {
     next(error)
   }
 }
-
 server.on('request', (req, res) => {
   if (bareServer.shouldRoute(req)) {
     bareServer.routeRequest(req, res)

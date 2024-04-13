@@ -1,3 +1,14 @@
+if (new URL(Object.assign(document.createElement('a'), { href: '/' }).href).password) {
+  // eslint-disable-next-line
+  window.location.href = window.location.href
+}
+try {
+  if (!localStorage['masqr'] && new URL(document.all.rcheck.href).password) {
+    window.location.reload()
+    localStorage['masqr'] = 1
+  }
+  // eslint-disable-next-line
+} catch {}
 document.addEventListener('DOMContentLoaded', function () {
   // Ads
   if (localStorage.getItem('ad') === null || localStorage.getItem('ad') === 'default') {
